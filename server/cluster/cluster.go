@@ -44,8 +44,11 @@ import (
 	"github.com/tikv/pd/server/replication"
 	"github.com/tikv/pd/server/schedule"
 	"github.com/tikv/pd/server/schedule/checker"
+	"github.com/tikv/pd/server/schedule/filter"
 	"github.com/tikv/pd/server/schedule/hbstream"
+	"github.com/tikv/pd/server/schedule/operator"
 	"github.com/tikv/pd/server/schedule/placement"
+	"github.com/tikv/pd/server/schedulers"
 	"github.com/tikv/pd/server/statistics"
 	"github.com/tikv/pd/server/versioninfo"
 	"go.etcd.io/etcd/clientv3"
@@ -1068,6 +1071,9 @@ func (c *RaftCluster) RemoveStore(storeID uint64, physicallyDestroyed bool) erro
 		return errs.ErrStoreDestroyed.FastGenByArgs(storeID)
 	}
 
+	// Evict all leaders from the offline store
+	c.forceEvictStoreLeaders(storeID)
+
 	newStore := store.Clone(core.OfflineStore(physicallyDestroyed))
 	log.Warn("store has been offline",
 		zap.Uint64("store-id", newStore.GetID()),
@@ -1080,6 +1086,21 @@ func (c *RaftCluster) RemoveStore(storeID uint64, physicallyDestroyed bool) erro
 		_ = c.SetStoreLimit(storeID, storelimit.RemovePeer, storelimit.Unlimited)
 	}
 	return err
+}
+
+func (c *RaftCluster) forceEvictStoreLeaders(storeID uint64) {
+	regions := c.GetStoreRegions(storeID)
+
+	for _, region := range regions {
+		target := filter.NewCandidates(c.GetFollowerStores(region)).
+			FilterTarget(c.GetOpts(), &filter.StoreStateFilter{ActionScope: schedulers.EvictLeaderName, TransferLeader: true}).
+			RandomPick()
+
+		brief := fmt.Sprintf("transfer leader: store %d to %d", storeID, target.GetID())
+		op := operator.NewOperator("evict-leaders-in-offline-store", brief, 1, &metapb.RegionEpoch{}, operator.OpRegion, operator.TransferLeader{FromStore: storeID, ToStore: target.GetID()})
+		c.coordinator.opController.SetOperator(op)
+		c.coordinator.opController.Dispatch(region, schedule.DispatchFromHeartBeat)
+	}
 }
 
 // buryStore marks a store as tombstone in cluster.
