@@ -327,4 +327,17 @@ func (s *storeTestSuite) TestStore(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(scene.Idle, Equals, 100)
 
+	// store check status
+	args = []string{"-u", pdAddr, "stores", "check", "Offline"}
+	output, err = pdctl.ExecuteCommand(cmd, args...)
+	c.Assert(err, IsNil)
+	c.Assert(strings.Contains(string(output), "PANIC"), IsFalse)
+	args = []string{"-u", pdAddr, "stores", "check", "Tombstone"}
+	output, err = pdctl.ExecuteCommand(cmd, args...)
+	c.Assert(err, IsNil)
+	c.Assert(strings.Contains(string(output), "PANIC"), IsFalse)
+	args = []string{"-u", pdAddr, "stores", "check", "Up"}
+	output, err = pdctl.ExecuteCommand(cmd, args...)
+	c.Assert(err, IsNil)
+	c.Assert(strings.Contains(string(output), "PANIC"), IsFalse)
 }
